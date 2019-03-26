@@ -21,6 +21,9 @@ import com.sharpai.detector.Detector;
 import com.sharpai.detector.env.ImageUtils;
 import com.sharpai.pim.MotionDetectionRS;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -32,7 +35,9 @@ import org.opencv.imgproc.Imgproc;
 import org.opencv.video.BackgroundSubtractor;
 import org.opencv.video.Video;
 
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
@@ -77,6 +82,7 @@ public class Detection {
     private long mLastCleanPicsTimestamp = 0L;
 
     private static final int PROCESS_SAVED_IMAGE_MSG = 1002;
+    private static final int PROCESS_JSON_ARRAY_MSG = 1003;
     private static final int PROCESS_SAVED_IMAGE_MSG_NOTNOW = 2001;
 
     private int DETECTION_IMAGE_WIDTH = 854;
@@ -172,6 +178,39 @@ public class Detection {
                             urlConnection.disconnect();
                             return true;
                         }
+                    }
+                    break;
+                case PROCESS_JSON_ARRAY_MSG:
+                    Log.d(TAG, "Processing message: " + msg.obj);
+                    //String jsonString = (String) msg.obj;
+                    JSONObject json = (JSONObject) msg.obj;
+
+                    try {
+                        Log.i("tag", "Thread");
+                        url = new URL("http://127.0.0.1:3000/api/post2");
+                        HttpURLConnection hey = (HttpURLConnection) url.openConnection();
+                        hey.setRequestMethod("POST");
+                        hey.setDoInput(true);
+                        hey.setDoOutput(true);
+                        hey.setRequestProperty("Content-Type", "application/json");
+                        hey.setConnectTimeout(10000);
+                        hey.setUseCaches(false);
+
+                        DataOutputStream wr = new DataOutputStream(hey.getOutputStream());
+
+                        InputStream inputStream = hey.getInputStream();
+                        wr.writeBytes(json.toString());
+                        wr.flush();
+                        //wr.close();
+                        int responseCode = urlConnection.getResponseCode();
+                        if (responseCode == HttpURLConnection.HTTP_OK) {
+                            Log.d(TAG, "connect success ");
+                        } else {
+                            //file.delete();
+                        }
+                        urlConnection.disconnect();
+                    } catch (Exception e) {
+                        Log.e("tag","error");
                     }
                     break;
                 default:
@@ -363,69 +402,77 @@ public class Detection {
 
         return (int) Math.pow(std.get(0, 0)[0], 2.0);
     }
-    public int doFaceDetectionAndSendTask(List<Classifier.Recognition> result, Bitmap bmp){
+    public int doFaceDetectionAndSendTask(List<Classifier.Recognition> result, Bitmap bmp) throws Exception {
         long tsStart;
         long tsEnd;
         int face_num = 0;
         String filename = "";
         File file = null;
+        JSONArray detectInfo = new JSONArray();
 
         for(final Classifier.Recognition recognition:result){
             tsStart = System.currentTimeMillis();
+
             RectF rectf = recognition.getLocation();
             Log.d(TAG,"recognition rect: "+rectf.toString());
             Bitmap personBmp = getCropBitmapByCPU(bmp,rectf);
             int[] face_info = mFaceDetector.predict_image(personBmp);
             tsEnd = System.currentTimeMillis();
+
             Log.v(TAG,"time diff (FD) "+(tsEnd-tsStart));
+
+            // Start to save person image information
+            JSONObject personInfo = new JSONObject();
+            personInfo.put("personLocation",rectf.toShortString());
+            tsStart = System.currentTimeMillis();
+            file = screenshot.getInstance()
+                    .saveScreenshotToPicturesFolder(mContext, personBmp, "person_");
+            filename = file.getAbsolutePath();
+            personInfo.put("personImagePath",filename);
 
             int num = 0;
             if(face_info != null && face_info.length > 0){
                 num = face_info[0];
             }
+            personInfo.put("faceNum",num);
             if(num > 0){
+
+                String faceStyle = calcFaceStyle(face_info);
+                Log.d(TAG,"Face style is "+faceStyle);
+                RectF faceRectF = getFaceRectF(face_info);
+
                 face_num+=num;
-                try {
-                    tsStart = System.currentTimeMillis();
-                    file = screenshot.getInstance()
-                            .saveScreenshotToPicturesFolder(mContext, personBmp, "person_");
+                Bitmap faceBmp = getCropBitmapByCPU(personBmp,faceRectF);
+                Bitmap resizedBmp = mMotionDetection.resizeBmp(faceBmp,FACE_SAVING_WIDTH,FACE_SAVING_HEIGHT);
+                int blurryValue = calcBitmapBlurry(resizedBmp);
+                File faceFile = screenshot.getInstance()
+                        .saveFaceToPicturesFolder(mContext, resizedBmp, "face_");
+                tsEnd = System.currentTimeMillis();
+                Log.d(TAG,"Blurry value of face is "+blurryValue+", saving face into "+faceFile.getAbsolutePath());
 
-                    filename = file.getAbsolutePath();
-
-                    String faceStyle = calcFaceStyle(face_info);
-                    Log.d(TAG,"Face style is "+faceStyle);
-                    RectF faceRectF = getFaceRectF(face_info);
-
-                    Bitmap faceBmp = getCropBitmapByCPU(personBmp,faceRectF);
-                    Bitmap resizedBmp = mMotionDetection.resizeBmp(faceBmp,FACE_SAVING_WIDTH,FACE_SAVING_HEIGHT);
-                    int blurryValue = calcBitmapBlurry(resizedBmp);
-                    File faceFile = screenshot.getInstance()
-                            .saveFaceToPicturesFolder(mContext, resizedBmp, "face_");
-
-                    tsEnd = System.currentTimeMillis();
-                    Log.v(TAG,"time diff (Save) "+(tsEnd-tsStart));
-                    Log.d(TAG,"Blurry value of face is "+blurryValue+", saving face into "+faceFile.getAbsolutePath());
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-
-                    //delete all jpg file in Download dir when disk is full
-                    deleteAllCapturedPics();
-                }
+                personInfo.put("faceLocation",faceRectF.toShortString());
+                personInfo.put("faceImagePath",faceFile.getAbsolutePath());
+                personInfo.put("faceStyle",faceStyle);
+                personInfo.put("faceBlurry",blurryValue);
                 //bitmap.recycle();
                 //bitmap = null;
-                if(filename.equals("")){
-                    continue;
-                }
-                if(file == null){
-                    continue;
-                }
-
-                mLastTaskSentTimestamp = System.currentTimeMillis();
-                mBackgroundHandler.obtainMessage(PROCESS_SAVED_IMAGE_MSG, filename).sendToTarget();
             }
+            Log.v(TAG,"time diff (Save) "+(tsEnd-tsStart));
+            if(filename.equals("")){
+                continue;
+            }
+            if(file == null){
+                continue;
+            }
+            detectInfo.put(personInfo);
         }
 
+        mLastTaskSentTimestamp = System.currentTimeMillis();
+
+        JSONObject finalObject = new JSONObject();
+        finalObject.put("msg", detectInfo);
+        Log.d(TAG,"Detection information: "+finalObject);
+        mBackgroundHandler.obtainMessage(PROCESS_JSON_ARRAY_MSG, finalObject).sendToTarget();
         //VideoActivity.setNumberOfFaces(face_num);
         return face_num;
     }
@@ -522,7 +569,18 @@ public class Detection {
         Log.v(TAG,"time diff (OD) "+(tsEnd-tsStart));
 
         if(personNum>0){
-            doFaceDetectionAndSendTask(result,bmp);
+            try {
+                doFaceDetectionAndSendTask(result,bmp);
+            } catch (JSONException e) {
+                e.printStackTrace();
+                Log.e(TAG,"Wired to have json exception");
+            } catch (Exception e) {
+                e.printStackTrace();
+
+                Log.e(TAG,"Can't write to flash, caused by disk full");
+                //delete all jpg file in Download dir when disk is full
+                deleteAllCapturedPics();
+            }
             if(mRecording==false){
                 mRecording = true;
                 //"-i", url, "-acodec", "copy", "-vcodec", "copy", targetFile.toString()
