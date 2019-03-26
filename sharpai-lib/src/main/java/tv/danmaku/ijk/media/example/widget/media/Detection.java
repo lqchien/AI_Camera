@@ -35,9 +35,16 @@ import org.opencv.imgproc.Imgproc;
 import org.opencv.video.BackgroundSubtractor;
 import org.opencv.video.Video;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.DataOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
@@ -184,33 +191,11 @@ public class Detection {
                     Log.d(TAG, "Processing message: " + msg.obj);
                     //String jsonString = (String) msg.obj;
                     JSONObject json = (JSONObject) msg.obj;
-
-                    try {
-                        Log.i("tag", "Thread");
-                        url = new URL("http://127.0.0.1:3000/api/post2");
-                        HttpURLConnection hey = (HttpURLConnection) url.openConnection();
-                        hey.setRequestMethod("POST");
-                        hey.setDoInput(true);
-                        hey.setDoOutput(true);
-                        hey.setRequestProperty("Content-Type", "application/json");
-                        hey.setConnectTimeout(10000);
-                        hey.setUseCaches(false);
-
-                        DataOutputStream wr = new DataOutputStream(hey.getOutputStream());
-
-                        InputStream inputStream = hey.getInputStream();
-                        wr.writeBytes(json.toString());
-                        wr.flush();
-                        //wr.close();
-                        int responseCode = urlConnection.getResponseCode();
-                        if (responseCode == HttpURLConnection.HTTP_OK) {
-                            Log.d(TAG, "connect success ");
-                        } else {
-                            //file.delete();
-                        }
-                        urlConnection.disconnect();
-                    } catch (Exception e) {
-                        Log.e("tag","error");
+                    String response = makeRequest("http://127.0.0.1:3000/api/post2",json.toString());
+                    if(response == null){
+                        Log.d(TAG,"Error of rest post");
+                    } else {
+                        Log.v(TAG,"Response of detector is "+response);
                     }
                     break;
                 default:
@@ -219,22 +204,62 @@ public class Detection {
             return true;
         }
     }
+    public static String makeRequest(String uri, String json) {
+        HttpURLConnection urlConnection;
+        String url;
+        String data = json;
+        String result = null;
+        try {
+            //Connect
+            urlConnection = (HttpURLConnection) ((new URL(uri).openConnection()));
+            urlConnection.setDoOutput(true);
+            urlConnection.setRequestProperty("Content-Type", "application/json");
+            urlConnection.setRequestProperty("Accept", "application/json");
+            urlConnection.setRequestMethod("POST");
+            urlConnection.connect();
 
-    private double calcIOU(Rect rect1,Rect rect2){
-        android.graphics.Rect rect_1 = new android.graphics.Rect(rect1.x,
-                rect1.y,
-                rect1.x+rect1.width,
-                rect1.y+rect1.height);
+            //Write
+            OutputStream outputStream = urlConnection.getOutputStream();
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"));
+            writer.write(data);
+            writer.close();
+            outputStream.close();
 
-        android.graphics.Rect rect_2 = new android.graphics.Rect(rect2.x,
-                rect2.y,
-                rect2.x+rect2.width,
-                rect2.y+rect2.height);
+            //Read
+            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(urlConnection.getInputStream(), "UTF-8"));
 
-        Log.d(TAG,"UO Area 1 "+rect_1.toShortString()+" 2 "+rect_2.toShortString());
-        rect_1.intersect(rect_2);
-        return 1.0*rect_1.width()*rect_2.height()/(rect_2.width()*rect_2.height());
+            String line = null;
+            StringBuilder sb = new StringBuilder();
 
+            while ((line = bufferedReader.readLine()) != null) {
+                sb.append(line);
+            }
+
+            bufferedReader.close();
+            result = sb.toString();
+
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return result;
+    }
+    private double calcIOU(Rect a,Rect b){
+        double aBottom = a.y + a.height;
+        double bBottom = b.y + b.height;
+        double aRight = a.x + a.width;
+        double bRight = b.x + b.width;
+        double yA = Math.max(a.y, b.y);
+        double xA = Math.max(a.x, b.x);
+        double yB = Math.min(aBottom, bBottom);
+        double xB = Math.max(aRight, bRight);
+        // Compute the intersection area.
+        double interArea = Math.max(0.f, (xB - xA + 1)) * Math.max(0.f, (yB - yA + 1));
+        double boxAArea = (aBottom - a.x) * (aRight - a.x);
+        double boxBArea = (bBottom - b.y) * (bRight - b.x);
+        double iou = interArea / (boxAArea + boxBArea - interArea);
+        return iou;
     }
     public boolean detectObjectChanges(Bitmap bmp){
 
