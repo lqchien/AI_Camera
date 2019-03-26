@@ -191,7 +191,7 @@ public class Detection {
                     Log.d(TAG, "Processing message: " + msg.obj);
                     //String jsonString = (String) msg.obj;
                     JSONObject json = (JSONObject) msg.obj;
-                    String response = makeRequest("http://127.0.0.1:3000/api/post2",json.toString());
+                    String response = makeRequest("http://127.0.0.1:3000/post2",json.toString());
                     if(response == null){
                         Log.d(TAG,"Error of rest post");
                     } else {
